@@ -1,0 +1,80 @@
+import asyncio
+import re
+import requests
+from panoramisk import Manager
+
+UCM_HOST = '192.168.1.50' # IP Address of your UCM
+UCM_PORT = 8888           # Port that was set in your UCM
+UCM_USER = 'zammad_ami'   # you will crate this username and password in UCM AMI settings
+UCM_PASS = 'Qwerty1234' 
+
+ZAMMAD_URL = '192.168.1.49'  # IP address of your zammad (Mine was self hosted in VM)
+ZAMMAD_TOKEN = '4532asRwqsdgASgsdaRqweqweasdggcxzueJFLASjsajsk'  # you will create token in zammad profile settings
+
+manager = Manager(
+    host=UCM_HOST,
+    port=UCM_PORT,
+    username=UCM_USER,
+    secret=UCM_PASS,
+    ping_delay=10
+)
+
+def create_zammad_ticket(caller_id, caller_name, target_ext):
+    headers = {
+        'Authorization': f'Token token={ZAMMAD_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        "title": f"Inbound Call from {caller_name} ({caller_id}) to Ext {target_ext}",
+        "group": "Users",
+        "customer_id": 1,
+        "article": {
+            "subject": f"Inbound Call Log - Ext {target_ext}",
+            "body": f"Automatic Ticket Generated:\nCaller ID: {caller_id}\nCaller Name: {caller_name}\nTarget Extension: {target_ext}",
+            "type": "phone",
+            "internal": False
+        }
+    }
+    try:
+        response = requests.post(f"{ZAMMAD_URL}/api/v1/tickets", json=payload, headers=headers)
+        if response.status_code == 201:
+            print(f"[+] Ticket created successfully for Caller {caller_id} -> Ext {target_ext}")
+        else:
+            print(f"[-] Failed to create ticket: {response.text}")
+    except Exception as e:
+        print(f"[-] Exception during Zammad API request: {e}")
+
+@manager.register_event('DialBegin')
+async def handle_dial(manager, event):
+    dest_exten = event.get('DialString', '')
+    destination = event.get('Destination', '')
+    connected_num = event.get('ConnectedLineNum', '')
+    exten = event.get('Exten', '')
+
+    target_fields = f"{dest_exten} {destination} {connected_num} {exten}"
+
+    # Extract all numbers and find one that falls within your 100 to 1400 departmental range
+    all_numbers = re.findall(r'\d+', target_fields)
+    target_ext = None
+    for num_str in all_numbers:
+        val = int(num_str)
+        if 100 <= val <= 1400:
+            target_ext = num_strz
+            break
+    if target_ext:
+        caller_id = event.get('CallerIDNum', 'Unknown')
+        caller_name = event.get('CallerIDName', 'Unknown')
+
+        print(f"[*] Call detected from {caller_id} to Extension {target_ext}")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, create_zammad_ticket, caller_id, caller_name, target_ext)
+
+if __name__ == '__main__':
+    print("[*] Connecting to UCM6510 AMI (Monitoring ranges 100 - 1400)...")
+    manager.connect()
+    try:
+        manager.loop.run_forever()
+    except KeyboardInterrupt:
+        manager.close()
+
+
